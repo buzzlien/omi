@@ -144,6 +144,17 @@ void set_led_state()
         return;
     }
 
+    // BLE-selected custom color overrides the automatic state machine below
+    // (connection/charging/battery colors) until cleared.
+    if (led_has_custom_color()) {
+        uint8_t r, g, b;
+        get_led_custom_color(&r, &g, &b);
+        set_led_pwm(LED_RED, r);
+        set_led_pwm(LED_GREEN, g);
+        set_led_pwm(LED_BLUE, b);
+        return;
+    }
+
 #ifdef CONFIG_OMI_ENABLE_OFFLINE_STORAGE
     // If RTC not synced, blink red to warn user to connect phone app
     if (!rtc_is_valid()) {
