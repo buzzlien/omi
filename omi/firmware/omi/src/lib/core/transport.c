@@ -25,6 +25,7 @@
 #include "config.h"
 #include "features.h"
 #include "haptic.h"
+#include "led.h"
 #include "mic.h"
 #ifdef CONFIG_OMI_ENABLE_MONITOR
 #include "monitor.h"
@@ -96,6 +97,17 @@ static ssize_t settings_mic_gain_read_handler(struct bt_conn *conn,
                                               void *buf,
                                               uint16_t len,
                                               uint16_t offset);
+static ssize_t settings_led_color_write_handler(struct bt_conn *conn,
+                                                const struct bt_gatt_attr *attr,
+                                                const void *buf,
+                                                uint16_t len,
+                                                uint16_t offset,
+                                                uint8_t flags);
+static ssize_t settings_led_color_read_handler(struct bt_conn *conn,
+                                               const struct bt_gatt_attr *attr,
+                                               void *buf,
+                                               uint16_t len,
+                                               uint16_t offset);
 static void charging_status_ccc_config_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
 static ssize_t settings_charging_status_read_handler(struct bt_conn *conn,
                                                      const struct bt_gatt_attr *attr,
@@ -179,6 +191,12 @@ static struct bt_uuid_128 settings_mic_gain_characteristic_uuid =
     BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x19B10012, 0xE8F2, 0x537E, 0x4F6C, 0xD104768A1214));
 static struct bt_uuid_128 settings_charging_status_characteristic_uuid =
     BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x19B10013, 0xE8F2, 0x537E, 0x4F6C, 0xD104768A1214));
+// Custom LED color: write 3 bytes [R,G,B] (each 0-100) to override the
+// automatic connection/charging/battery LED behavior with a fixed color.
+// Write 1 byte 0xFF to clear the override and return to automatic mode.
+// Read returns 4 bytes [active(0/1), R, G, B]. Not persisted across reboot.
+static struct bt_uuid_128 settings_led_color_characteristic_uuid =
+    BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x19B10014, 0xE8F2, 0x537E, 0x4F6C, 0xD104768A1214));
 
 static struct bt_gatt_attr settings_service_attr[] = {
     BT_GATT_PRIMARY_SERVICE(&settings_service_uuid),
@@ -193,6 +211,12 @@ static struct bt_gatt_attr settings_service_attr[] = {
                            BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
                            settings_mic_gain_read_handler,
                            settings_mic_gain_write_handler,
+                           NULL),
+    BT_GATT_CHARACTERISTIC(&settings_led_color_characteristic_uuid.uuid,
+                           BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+                           BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                           settings_led_color_read_handler,
+                           settings_led_color_write_handler,
                            NULL),
     BT_GATT_CHARACTERISTIC(&settings_charging_status_characteristic_uuid.uuid,
                            BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
@@ -406,6 +430,48 @@ static ssize_t settings_dim_ratio_read_handler(struct bt_conn *conn,
     uint8_t current_ratio = app_settings_get_dim_ratio();
     LOG_INF("Reading dim ratio: %u", current_ratio);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &current_ratio, sizeof(current_ratio));
+}
+
+static ssize_t settings_led_color_write_handler(struct bt_conn *conn,
+                                                const struct bt_gatt_attr *attr,
+                                                const void *buf,
+                                                uint16_t len,
+                                                uint16_t offset,
+                                                uint8_t flags)
+{
+    const uint8_t *data = (const uint8_t *) buf;
+
+    if (len == 1 && data[0] == 0xFF) {
+        clear_led_custom_color();
+        LOG_INF("LED custom color cleared, resuming automatic mode");
+        return len;
+    }
+
+    if (len != 3) {
+        LOG_WRN("Invalid length for LED color write: %u (expected 3 bytes R,G,B, or 1 byte 0xFF to clear)", len);
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    uint8_t r = data[0];
+    uint8_t g = data[1];
+    uint8_t b = data[2];
+    LOG_INF("Received custom LED color: R=%u G=%u B=%u", r, g, b);
+    set_led_custom_color(r, g, b);
+
+    return len;
+}
+
+static ssize_t settings_led_color_read_handler(struct bt_conn *conn,
+                                               const struct bt_gatt_attr *attr,
+                                               void *buf,
+                                               uint16_t len,
+                                               uint16_t offset)
+{
+    uint8_t r, g, b;
+    get_led_custom_color(&r, &g, &b);
+    uint8_t resp[4] = {led_has_custom_color() ? 1 : 0, r, g, b};
+    LOG_INF("Reading LED color: active=%u R=%u G=%u B=%u", resp[0], r, g, b);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, resp, sizeof(resp));
 }
 
 static ssize_t settings_mic_gain_write_handler(struct bt_conn *conn,
