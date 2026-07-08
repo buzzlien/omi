@@ -96,3 +96,39 @@ void led_off(void)
     k_msleep(10);
     set_led_blue(false);
 }
+
+// --- Custom BLE-controlled LED color override ---
+// Not persisted across reboot: device returns to automatic state-driven
+// LED behavior (connection/charging/battery colors) on power cycle.
+static bool custom_color_active = false;
+static uint8_t custom_r = 0;
+static uint8_t custom_g = 0;
+static uint8_t custom_b = 0;
+
+void set_led_custom_color(uint8_t r, uint8_t g, uint8_t b)
+{
+    custom_r = r > 100 ? 100 : r;
+    custom_g = g > 100 ? 100 : g;
+    custom_b = b > 100 ? 100 : b;
+    custom_color_active = true;
+    set_led_pwm(LED_RED, custom_r);
+    set_led_pwm(LED_GREEN, custom_g);
+    set_led_pwm(LED_BLUE, custom_b);
+}
+
+void clear_led_custom_color(void)
+{
+    custom_color_active = false;
+}
+
+bool led_has_custom_color(void)
+{
+    return custom_color_active;
+}
+
+void get_led_custom_color(uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    *r = custom_r;
+    *g = custom_g;
+    *b = custom_b;
+}
